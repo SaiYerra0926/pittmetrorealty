@@ -1,5 +1,43 @@
 import pool from '../src/lib/database.js';
 
+// Auto-migrate photo_url column on startup (if needed)
+(async () => {
+  try {
+    const client = await pool.connect();
+    try {
+      // Check if column is still VARCHAR(500)
+      const columnInfo = await client.query(`
+        SELECT data_type, character_maximum_length 
+        FROM information_schema.columns 
+        WHERE table_name = 'property_photos' 
+        AND column_name = 'photo_url'
+      `);
+      
+      if (columnInfo.rows.length > 0) {
+        const currentType = columnInfo.rows[0].data_type;
+        const currentLength = columnInfo.rows[0].character_maximum_length;
+        
+        // If it's VARCHAR with a length limit, migrate to TEXT
+        if (currentType === 'character varying' && currentLength) {
+          console.log('🔄 Auto-migrating photo_url column from VARCHAR(500) to TEXT...');
+          await client.query('ALTER TABLE property_photos ALTER COLUMN photo_url TYPE TEXT');
+          console.log('✅ Migration completed: photo_url is now TEXT');
+        } else if (currentType === 'text') {
+          console.log('✅ photo_url column is already TEXT - no migration needed');
+        }
+      }
+    } catch (migrationError) {
+      console.warn('⚠️  Could not auto-migrate photo_url column:', migrationError.message);
+      console.warn('   Please run the migration manually: node run-migration.mjs');
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.warn('⚠️  Could not check/migrate database schema:', error.message);
+    console.warn('   Please run the migration manually: node run-migration.mjs');
+  }
+})();
+
 // Get all properties
 export const getProperties = async (req, res) => {
   // Set a timeout for the request
@@ -213,6 +251,14 @@ export const getProperties = async (req, res) => {
       submittedAt: property.created_at || property.createdAt,
       createdAt: property.created_at || property.createdAt,
       updatedAt: property.updated_at || property.updatedAt,
+      // Include latitude/longitude for map functionality
+      latitude: property.latitude || null,
+      longitude: property.longitude || null,
+      // Also include as coordinates object for convenience
+      coordinates: (property.latitude && property.longitude) ? {
+        lat: parseFloat(property.latitude),
+        lng: parseFloat(property.longitude)
+      } : null,
       photos: property.photos.map(p => ({
         id: p.id,
         name: p.photo_name || p.name || '',
@@ -339,44 +385,500 @@ export const createProperty = async (req, res) => {
       address,
       city,
       state,
-      zip_code,
+      zipCode,  // camelCase from frontend
+      zip_code, // snake_case fallback
+      propertyType,
       property_type,
       bedrooms,
       bathrooms,
+      squareFeet,
       square_feet,
+      yearBuilt,
       year_built,
+      lotSize,
       lot_size,
       price,
+      listingType,
       listing_type,
+      availableDate,
       available_date,
       owner_id,
       agent_id,
+      ownerName,
+      ownerEmail,
+      ownerPhone,
+      ownerPreferredContact,
       features,
       amenities,
-      photos
+      photos,
+      status
     } = req.body;
+    
+    // Log received data for debugging
+    console.log('📥 Received request body:', {
+      zipCode: zipCode,
+      zip_code: zip_code,
+      zipCodeType: typeof zipCode,
+      zip_codeType: typeof zip_code,
+      zipCodeIsNull: zipCode === null,
+      zipCodeIsUndefined: zipCode === undefined,
+      zipCodeIsEmpty: zipCode === '',
+      propertyType: propertyType,
+      property_type: property_type,
+      propertyTypeType: typeof propertyType,
+      property_typeType: typeof property_type,
+      propertyTypeIsNull: propertyType === null,
+      propertyTypeIsUndefined: propertyType === undefined,
+      propertyTypeIsEmpty: propertyType === '',
+      listingType: listingType,
+      listing_type: listing_type,
+      listingTypeType: typeof listingType,
+      listing_typeType: typeof listing_type,
+      listingTypeIsNull: listingType === null,
+      listingTypeIsUndefined: listingType === undefined,
+      listingTypeIsEmpty: listingType === '',
+      bedrooms: bedrooms,
+      bathrooms: bathrooms,
+      squareFeet: squareFeet,
+      square_feet: square_feet,
+      price: price,
+      title: title,
+      address: address,
+      city: city,
+      state: state
+    });
+    
+    // Validate required fields - ensure zipCode is properly extracted
+    // Handle null, undefined, empty string, and the string "null" or "undefined"
+    let rawZipCode = zipCode !== undefined && zipCode !== null ? zipCode : (zip_code !== undefined && zip_code !== null ? zip_code : '');
+    
+    // Convert to string and handle edge cases
+    let finalZipCode;
+    if (rawZipCode === null || rawZipCode === undefined) {
+      finalZipCode = '';
+    } else if (typeof rawZipCode === 'string') {
+      finalZipCode = rawZipCode.trim();
+    } else {
+      finalZipCode = String(rawZipCode).trim();
+    }
+    
+    // Reject if empty, null, undefined, or the literal strings "null" or "undefined"
+    if (!finalZipCode || finalZipCode === '' || finalZipCode === 'null' || finalZipCode === 'undefined') {
+      console.error('❌ ZIP CODE VALIDATION FAILED:', {
+        zipCode,
+        zip_code,
+        rawZipCode,
+        finalZipCode,
+        zipCodeType: typeof zipCode,
+        zip_codeType: typeof zip_code
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'ZIP code is required and cannot be empty',
+        error: `ZIP code validation failed. Received zipCode: ${JSON.stringify(zipCode)} (type: ${typeof zipCode}), zip_code: ${JSON.stringify(zip_code)} (type: ${typeof zip_code})`
+      });
+    }
+    
+    // Check other required fields
+    if (!title || !description || !address || !city || !state) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: title, description, address, city, state, and zipCode are required',
+        error: `Missing required field: ${!title ? 'title' : !description ? 'description' : !address ? 'address' : !city ? 'city' : 'state'}`
+      });
+    }
+    
+    console.log('✅ Validated zipCode:', finalZipCode, 'Type:', typeof finalZipCode, 'Length:', finalZipCode.length);
+    
+    // Validate property_type - ensure it's properly extracted
+    // Handle null, undefined, empty string, and the string "null" or "undefined"
+    let rawPropertyType = propertyType !== undefined && propertyType !== null ? propertyType : (property_type !== undefined && property_type !== null ? property_type : '');
+    
+    // Convert to string and handle edge cases
+    let finalPropertyType;
+    if (rawPropertyType === null || rawPropertyType === undefined) {
+      finalPropertyType = '';
+    } else if (typeof rawPropertyType === 'string') {
+      finalPropertyType = rawPropertyType.trim();
+    } else {
+      finalPropertyType = String(rawPropertyType).trim();
+    }
+    
+    // Reject if empty, null, undefined, or the literal strings "null" or "undefined"
+    if (!finalPropertyType || finalPropertyType === '' || finalPropertyType === 'null' || finalPropertyType === 'undefined') {
+      console.error('❌ PROPERTY TYPE VALIDATION FAILED:', {
+        propertyType,
+        property_type,
+        rawPropertyType,
+        finalPropertyType,
+        propertyTypeType: typeof propertyType,
+        property_typeType: typeof property_type
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'Property type is required and cannot be empty',
+        error: `Property type validation failed. Received propertyType: ${JSON.stringify(propertyType)} (type: ${typeof propertyType}), property_type: ${JSON.stringify(property_type)} (type: ${typeof property_type})`
+      });
+    }
+    
+    // Final validation - ensure it's a valid non-empty string
+    if (typeof finalPropertyType !== 'string' || finalPropertyType.length === 0) {
+      console.error('❌ PROPERTY TYPE TYPE VALIDATION FAILED:', {
+        finalPropertyType,
+        type: typeof finalPropertyType,
+        length: finalPropertyType?.length
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'Property type must be a non-empty string',
+        error: `Invalid propertyType type or value. Got: ${JSON.stringify(finalPropertyType)} (type: ${typeof finalPropertyType})`
+      });
+    }
+    
+    console.log('✅ Validated propertyType:', finalPropertyType, 'Type:', typeof finalPropertyType, 'Length:', finalPropertyType.length);
+    
+    // Validate square_feet - ensure it's properly extracted
+    // Handle null, undefined, empty, and convert to number
+    let rawSquareFeet = squareFeet !== undefined && squareFeet !== null ? squareFeet : (square_feet !== undefined && square_feet !== null ? square_feet : 0);
+    
+    // Convert to number and handle edge cases
+    let finalSquareFeet;
+    if (rawSquareFeet === null || rawSquareFeet === undefined || rawSquareFeet === '') {
+      finalSquareFeet = 0;
+    } else {
+      finalSquareFeet = Number(rawSquareFeet);
+      if (isNaN(finalSquareFeet) || finalSquareFeet <= 0) {
+        finalSquareFeet = 0;
+      }
+    }
+    
+    // Reject if zero or invalid
+    if (!finalSquareFeet || finalSquareFeet <= 0) {
+      console.error('❌ SQUARE FEET VALIDATION FAILED:', {
+        squareFeet,
+        square_feet,
+        rawSquareFeet,
+        finalSquareFeet,
+        squareFeetType: typeof squareFeet,
+        square_feetType: typeof square_feet
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'Square feet is required and must be greater than 0',
+        error: `Square feet validation failed. Received squareFeet: ${JSON.stringify(squareFeet)} (type: ${typeof squareFeet}), square_feet: ${JSON.stringify(square_feet)} (type: ${typeof square_feet})`
+      });
+    }
+    
+    console.log('✅ Validated squareFeet:', finalSquareFeet, 'Type:', typeof finalSquareFeet);
+    
+    // Validate listing_type - ensure it's properly extracted
+    // Handle null, undefined, empty string, and the string "null" or "undefined"
+    let rawListingType = listingType !== undefined && listingType !== null ? listingType : (listing_type !== undefined && listing_type !== null ? listing_type : '');
+    
+    // Convert to string and handle edge cases
+    let finalListingType;
+    if (rawListingType === null || rawListingType === undefined) {
+      finalListingType = '';
+    } else if (typeof rawListingType === 'string') {
+      finalListingType = rawListingType.trim().toLowerCase();
+    } else {
+      finalListingType = String(rawListingType).trim().toLowerCase();
+    }
+    
+    // Validate against allowed values
+    const validListingTypes = ['rent', 'sell', 'buy'];
+    if (!finalListingType || finalListingType === '' || finalListingType === 'null' || finalListingType === 'undefined' || !validListingTypes.includes(finalListingType)) {
+      console.error('❌ LISTING TYPE VALIDATION FAILED:', {
+        listingType,
+        listing_type,
+        rawListingType,
+        finalListingType,
+        listingTypeType: typeof listingType,
+        listing_typeType: typeof listing_type
+      });
+      return res.status(400).json({
+        success: false,
+        message: `Listing type is required and must be one of: ${validListingTypes.join(', ')}`,
+        error: `Listing type validation failed. Received listingType: ${JSON.stringify(listingType)} (type: ${typeof listingType}), listing_type: ${JSON.stringify(listing_type)} (type: ${typeof listing_type}). Valid values: ${validListingTypes.join(', ')}`
+      });
+    }
+    
+    console.log('✅ Validated listingType:', finalListingType, 'Type:', typeof finalListingType);
+    
+    // Validate bedrooms - ensure it's properly extracted and is a number > 0
+    let rawBedrooms = bedrooms !== undefined && bedrooms !== null ? bedrooms : 0;
+    let finalBedrooms = Number(rawBedrooms);
+    if (isNaN(finalBedrooms) || finalBedrooms <= 0) {
+      console.error('❌ BEDROOMS VALIDATION FAILED:', {
+        bedrooms,
+        rawBedrooms,
+        finalBedrooms,
+        bedroomsType: typeof bedrooms
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'Bedrooms is required and must be greater than 0',
+        error: `Bedrooms validation failed. Received bedrooms: ${JSON.stringify(bedrooms)} (type: ${typeof bedrooms})`
+      });
+    }
+    console.log('✅ Validated bedrooms:', finalBedrooms, 'Type:', typeof finalBedrooms);
+    
+    // Validate bathrooms - ensure it's properly extracted and is a number > 0
+    let rawBathrooms = bathrooms !== undefined && bathrooms !== null ? bathrooms : 0;
+    let finalBathrooms = Number(rawBathrooms);
+    if (isNaN(finalBathrooms) || finalBathrooms <= 0) {
+      console.error('❌ BATHROOMS VALIDATION FAILED:', {
+        bathrooms,
+        rawBathrooms,
+        finalBathrooms,
+        bathroomsType: typeof bathrooms
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'Bathrooms is required and must be greater than 0',
+        error: `Bathrooms validation failed. Received bathrooms: ${JSON.stringify(bathrooms)} (type: ${typeof bathrooms})`
+      });
+    }
+    console.log('✅ Validated bathrooms:', finalBathrooms, 'Type:', typeof finalBathrooms);
+    
+    // Validate price - ensure it's properly extracted and is a number > 0
+    let rawPrice = price !== undefined && price !== null ? price : 0;
+    let finalPrice = Number(rawPrice);
+    if (isNaN(finalPrice) || finalPrice <= 0) {
+      console.error('❌ PRICE VALIDATION FAILED:', {
+        price,
+        rawPrice,
+        finalPrice,
+        priceType: typeof price
+      });
+      return res.status(400).json({
+        success: false,
+        message: 'Price is required and must be greater than 0',
+        error: `Price validation failed. Received price: ${JSON.stringify(price)} (type: ${typeof price})`
+      });
+    }
+    console.log('✅ Validated price:', finalPrice, 'Type:', typeof finalPrice);
+    
+    // Validate string field lengths to prevent "value too long" errors
+    // Title: VARCHAR(255)
+    if (title && title.length > 255) {
+      console.error('❌ TITLE TOO LONG:', { titleLength: title.length, maxLength: 255 });
+      return res.status(400).json({
+        success: false,
+        message: 'Title is too long. Maximum length is 255 characters.',
+        error: `Title length: ${title.length} characters (max: 255)`
+      });
+    }
+    
+    // Address: VARCHAR(255)
+    if (address && address.length > 255) {
+      console.error('❌ ADDRESS TOO LONG:', { addressLength: address.length, maxLength: 255 });
+      return res.status(400).json({
+        success: false,
+        message: 'Address is too long. Maximum length is 255 characters.',
+        error: `Address length: ${address.length} characters (max: 255)`
+      });
+    }
+    
+    // City: VARCHAR(100)
+    if (city && city.length > 100) {
+      console.error('❌ CITY TOO LONG:', { cityLength: city.length, maxLength: 100 });
+      return res.status(400).json({
+        success: false,
+        message: 'City name is too long. Maximum length is 100 characters.',
+        error: `City length: ${city.length} characters (max: 100)`
+      });
+    }
+    
+    // State: VARCHAR(50)
+    if (state && state.length > 50) {
+      console.error('❌ STATE TOO LONG:', { stateLength: state.length, maxLength: 50 });
+      return res.status(400).json({
+        success: false,
+        message: 'State name is too long. Maximum length is 50 characters.',
+        error: `State length: ${state.length} characters (max: 50)`
+      });
+    }
+    
+    // Property Type: VARCHAR(50) or VARCHAR(100) depending on schema
+    if (finalPropertyType && finalPropertyType.length > 100) {
+      console.error('❌ PROPERTY TYPE TOO LONG:', { propertyTypeLength: finalPropertyType.length, maxLength: 100 });
+      return res.status(400).json({
+        success: false,
+        message: 'Property type is too long. Maximum length is 100 characters.',
+        error: `Property type length: ${finalPropertyType.length} characters (max: 100)`
+      });
+    }
+    
+    // Zip Code: VARCHAR(10) or VARCHAR(20) depending on schema
+    if (finalZipCode && finalZipCode.length > 20) {
+      console.error('❌ ZIP CODE TOO LONG:', { zipCodeLength: finalZipCode.length, maxLength: 20 });
+      return res.status(400).json({
+        success: false,
+        message: 'ZIP code is too long. Maximum length is 20 characters.',
+        error: `ZIP code length: ${finalZipCode.length} characters (max: 20)`
+      });
+    }
+    
+    // Validate photo URLs before insertion (TEXT column - no length limit, but reasonable size check)
+    // Note: Database column is now TEXT, so we can store larger base64 strings
+    // Still validate to prevent extremely large uploads (max 5MB base64 = ~6.7MB file)
+    if (photos && Array.isArray(photos) && photos.length > 0) {
+      for (let i = 0; i < photos.length; i++) {
+        const photo = photos[i];
+        const photoUrl = photo.url || '';
+        // Check for extremely large base64 strings (5MB = ~5,242,880 characters)
+        const MAX_BASE64_SIZE = 5 * 1024 * 1024; // 5MB in characters
+        if (photoUrl.length > MAX_BASE64_SIZE) {
+          const sizeMB = (photoUrl.length / (1024 * 1024)).toFixed(2);
+          console.error(`❌ PHOTO URL TOO LARGE: Photo ${i + 1} base64 size: ${sizeMB}MB (max: 5MB)`);
+          return res.status(400).json({
+            success: false,
+            message: `Photo ${i + 1} is too large (${sizeMB}MB). Maximum size is 5MB. Please compress or resize the image.`,
+            error: `Photo ${i + 1} base64 size: ${photoUrl.length} characters (max: ${MAX_BASE64_SIZE}). Please use smaller images.`
+          });
+        }
+      }
+    }
     
     const client = await pool.connect();
     
     try {
       await client.query('BEGIN');
       
-      // Insert property
-      const propertyResult = await client.query(
-        `INSERT INTO properties (
-          title, description, address, city, state, zip_code, property_type,
-          bedrooms, bathrooms, square_feet, year_built, lot_size, price,
-          listing_type, available_date, owner_id, agent_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-        RETURNING *`,
-        [
-          title, description, address, city, state, zip_code, property_type,
-          bedrooms, bathrooms, square_feet, year_built, lot_size, price,
-          listing_type, available_date, owner_id, agent_id
-        ]
-      );
+      // Use the validated finalZipCode - ensure it's definitely not null
+      const zipCodeForInsert = finalZipCode;
+      console.log('🔍 Using zipCodeForInsert for INSERT:', zipCodeForInsert);
       
-      const property = propertyResult.rows[0];
+      // Insert property - try simple schema first (matches actual database)
+      let propertyResult;
+      let property;
+      
+      try {
+        // Use validated propertyType - ensure it's definitely not null
+        const propertyTypeForInsert = finalPropertyType;
+        console.log('🔍 Using propertyTypeForInsert for INSERT:', propertyTypeForInsert);
+        
+        // Use validated squareFeet - ensure it's definitely not null
+        const squareFeetForInsert = finalSquareFeet;
+        console.log('🔍 Using squareFeetForInsert for INSERT:', squareFeetForInsert);
+        
+        // Use validated bedrooms, bathrooms, price, and listingType
+        const bedroomsForInsert = finalBedrooms;
+        const bathroomsForInsert = finalBathrooms;
+        const priceForInsert = finalPrice;
+        const listingTypeForInsert = finalListingType;
+        console.log('🔍 Using bedroomsForInsert for INSERT:', bedroomsForInsert);
+        console.log('🔍 Using bathroomsForInsert for INSERT:', bathroomsForInsert);
+        console.log('🔍 Using priceForInsert for INSERT:', priceForInsert);
+        console.log('🔍 Using listingTypeForInsert for INSERT:', listingTypeForInsert);
+        
+        const insertValues = [
+          title, 
+          description, 
+          address, 
+          city, 
+          state, 
+          zipCodeForInsert, // Use validated zipCode
+          propertyTypeForInsert, // Use validated propertyType
+          bedroomsForInsert, // Use validated bedrooms
+          bathroomsForInsert, // Use validated bathrooms
+          squareFeetForInsert, // Use validated squareFeet 
+          yearBuilt || year_built, 
+          lotSize || lot_size, 
+          priceForInsert, // Use validated price
+          listingTypeForInsert, // Use validated listingType
+          availableDate || available_date, 
+          owner_id || null, 
+          agent_id || null, 
+          status || 'active'
+        ];
+        
+        console.log('🔍 ZIP CODE VALUE AT POSITION $6:', insertValues[5], 'Type:', typeof insertValues[5]);
+        console.log('🔍 PROPERTY TYPE VALUE AT POSITION $7:', insertValues[6], 'Type:', typeof insertValues[6]);
+        console.log('🔍 BEDROOMS VALUE AT POSITION $8:', insertValues[7], 'Type:', typeof insertValues[7]);
+        console.log('🔍 BATHROOMS VALUE AT POSITION $9:', insertValues[8], 'Type:', typeof insertValues[8]);
+        console.log('🔍 SQUARE FEET VALUE AT POSITION $10:', insertValues[9], 'Type:', typeof insertValues[9]);
+        console.log('🔍 PRICE VALUE AT POSITION $13:', insertValues[12], 'Type:', typeof insertValues[12]);
+        console.log('🔍 LISTING TYPE VALUE AT POSITION $14:', insertValues[13], 'Type:', typeof insertValues[13]);
+        
+        // CRITICAL CHECK: Ensure zipCode is definitely not null/undefined before INSERT
+        if (insertValues[5] === null || insertValues[5] === undefined || insertValues[5] === '') {
+          console.error('❌❌❌ CRITICAL ERROR: zipCode is NULL/UNDEFINED/EMPTY at position $6!');
+          throw new Error('CRITICAL: zipCode is NULL/UNDEFINED/EMPTY when attempting database INSERT.');
+        }
+        
+        // CRITICAL CHECK: Ensure propertyType is definitely not null/undefined before INSERT
+        if (insertValues[6] === null || insertValues[6] === undefined || insertValues[6] === '') {
+          console.error('❌❌❌ CRITICAL ERROR: propertyType is NULL/UNDEFINED/EMPTY at position $7!');
+          throw new Error('CRITICAL: propertyType is NULL/UNDEFINED/EMPTY when attempting database INSERT.');
+        }
+        
+        // CRITICAL CHECK: Ensure bedrooms is definitely not null/undefined/zero before INSERT
+        if (insertValues[7] === null || insertValues[7] === undefined || insertValues[7] === 0 || insertValues[7] === '') {
+          console.error('❌❌❌ CRITICAL ERROR: bedrooms is NULL/UNDEFINED/ZERO at position $8!');
+          throw new Error('CRITICAL: bedrooms is NULL/UNDEFINED/ZERO when attempting database INSERT.');
+        }
+        
+        // CRITICAL CHECK: Ensure bathrooms is definitely not null/undefined/zero before INSERT
+        if (insertValues[8] === null || insertValues[8] === undefined || insertValues[8] === 0 || insertValues[8] === '') {
+          console.error('❌❌❌ CRITICAL ERROR: bathrooms is NULL/UNDEFINED/ZERO at position $9!');
+          throw new Error('CRITICAL: bathrooms is NULL/UNDEFINED/ZERO when attempting database INSERT.');
+        }
+        
+        // CRITICAL CHECK: Ensure squareFeet is definitely not null/undefined/zero before INSERT
+        if (insertValues[9] === null || insertValues[9] === undefined || insertValues[9] === 0 || insertValues[9] === '') {
+          console.error('❌❌❌ CRITICAL ERROR: squareFeet is NULL/UNDEFINED/ZERO at position $10!');
+          throw new Error('CRITICAL: squareFeet is NULL/UNDEFINED/ZERO when attempting database INSERT.');
+        }
+        
+        // CRITICAL CHECK: Ensure price is definitely not null/undefined/zero before INSERT
+        if (insertValues[12] === null || insertValues[12] === undefined || insertValues[12] === 0 || insertValues[12] === '') {
+          console.error('❌❌❌ CRITICAL ERROR: price is NULL/UNDEFINED/ZERO at position $13!');
+          throw new Error('CRITICAL: price is NULL/UNDEFINED/ZERO when attempting database INSERT.');
+        }
+        
+        // CRITICAL CHECK: Ensure listingType is definitely not null/undefined/empty before INSERT
+        if (insertValues[13] === null || insertValues[13] === undefined || insertValues[13] === '' || insertValues[13] === 'null' || insertValues[13] === 'undefined') {
+          console.error('❌❌❌ CRITICAL ERROR: listingType is NULL/UNDEFINED/EMPTY at position $14!');
+          throw new Error('CRITICAL: listingType is NULL/UNDEFINED/EMPTY when attempting database INSERT.');
+        }
+        
+        // Extract latitude and longitude from request body
+        const latitude = req.body.latitude || req.body.lat || null;
+        const longitude = req.body.longitude || req.body.lng || req.body.lon || null;
+        
+        // Validate coordinates if provided
+        let finalLatitude = null;
+        let finalLongitude = null;
+        if (latitude !== null && latitude !== undefined && longitude !== null && longitude !== undefined) {
+          const lat = parseFloat(latitude);
+          const lng = parseFloat(longitude);
+          if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+            finalLatitude = lat;
+            finalLongitude = lng;
+            console.log(`✅ Using provided coordinates: ${finalLatitude}, ${finalLongitude}`);
+          } else {
+            console.warn(`⚠️ Invalid coordinates provided: ${latitude}, ${longitude}`);
+          }
+        }
+        
+        propertyResult = await client.query(
+          `INSERT INTO properties (
+            title, description, address, city, state, zip_code, property_type,
+            bedrooms, bathrooms, square_feet, year_built, lot_size, price,
+            listing_type, available_date, owner_id, agent_id, status, latitude, longitude
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+          RETURNING *`,
+          [...insertValues, finalLatitude, finalLongitude]
+        );
+        
+        property = propertyResult.rows[0];
+        console.log('✅ Successfully inserted property');
+      } catch (insertError) {
+        console.error('❌ INSERT failed:', insertError.message);
+        throw insertError;
+      }
       
       // Insert features
       if (features && features.length > 0) {
@@ -398,24 +900,43 @@ export const createProperty = async (req, res) => {
         }
       }
       
-      // Insert photos
-      if (photos && photos.length > 0) {
+      // Insert photos - support multiple photos per property
+      if (photos && Array.isArray(photos) && photos.length > 0) {
+        console.log(`📸 Inserting ${photos.length} photos for property ${property.id}`);
         for (let i = 0; i < photos.length; i++) {
           const photo = photos[i];
-          await client.query(
-            `INSERT INTO property_photos (
-              property_id, photo_url, photo_name, photo_size, is_primary, display_order
-            ) VALUES ($1, $2, $3, $4, $5, $6)`,
-            [
-              property.id,
-              photo.url,
-              photo.name,
-              photo.size,
-              i === 0, // First photo is primary
-              i + 1
-            ]
-          );
+          const photoUrl = photo.url || photo.photo_url || '';
+          const photoName = photo.name || photo.photo_name || `photo_${i + 1}.jpg`;
+          const photoSize = photo.size || photo.photo_size || 0;
+          
+          if (photoUrl) {
+            // Validate size (max 5MB base64 = ~6.7MB file)
+            const MAX_BASE64_SIZE = 5 * 1024 * 1024; // 5MB
+            if (photoUrl.length > MAX_BASE64_SIZE) {
+              const sizeMB = (photoUrl.length / (1024 * 1024)).toFixed(2);
+              console.error(`❌ PHOTO TOO LARGE: Photo ${i + 1} (${photoName}) base64 size: ${sizeMB}MB`);
+              throw new Error(`Photo ${i + 1} (${photoName}) is too large (${sizeMB}MB). Maximum size is 5MB. Please compress or resize the image.`);
+            }
+            
+            await client.query(
+              `INSERT INTO property_photos (
+                property_id, photo_url, photo_name, photo_size, is_primary, display_order
+              ) VALUES ($1, $2, $3, $4, $5, $6)`,
+              [
+                property.id,
+                photoUrl,
+                photoName,
+                photoSize,
+                i === 0, // First photo is primary
+                i + 1
+              ]
+            );
+            console.log(`✅ Inserted photo ${i + 1}/${photos.length}: ${photoName} (${(photoUrl.length / 1024).toFixed(2)}KB base64)`);
+          } else {
+            console.warn(`⚠️ Skipping photo ${i + 1} - no URL provided`);
+          }
         }
+        console.log(`✅ Successfully inserted ${photos.length} photos for property ${property.id}`);
       }
       
       await client.query('COMMIT');
@@ -435,10 +956,24 @@ export const createProperty = async (req, res) => {
     
   } catch (error) {
     console.error('Error creating property:', error);
+    
+    // Check if it's the VARCHAR(500) length error
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes('value too long for type character varying(500)') || 
+        errorMessage.includes('character varying(500)')) {
+      console.error('❌ DATABASE MIGRATION REQUIRED: photo_url column is still VARCHAR(500)');
+      console.error('   Please run: node run-migration.mjs');
+      return res.status(500).json({
+        success: false,
+        message: 'Database migration required',
+        error: 'The photo_url column needs to be migrated from VARCHAR(500) to TEXT. Please run the migration script: node run-migration.mjs, then restart the server.'
+      });
+    }
+    
     res.status(500).json({
       success: false,
       message: 'Failed to create property',
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: errorMessage
     });
   }
 };
@@ -597,6 +1132,26 @@ export const updateProperty = async (req, res) => {
         updateValues.push(status);
       }
       
+      // Handle latitude and longitude updates
+      const latitude = req.body.latitude || req.body.lat || undefined;
+      const longitude = req.body.longitude || req.body.lng || req.body.lon || undefined;
+      
+      if (latitude !== undefined && longitude !== undefined) {
+        const lat = parseFloat(latitude);
+        const lng = parseFloat(longitude);
+        if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+          updateFields.push(`latitude = $${paramCount++}`);
+          updateValues.push(lat);
+          updateFields.push(`longitude = $${paramCount++}`);
+          updateValues.push(lng);
+          console.log(`✅ Updating coordinates: ${lat}, ${lng}`);
+        } else {
+          console.warn(`⚠️ Invalid coordinates provided for update: ${latitude}, ${longitude}`);
+        }
+      } else if (latitude !== undefined || longitude !== undefined) {
+        console.warn(`⚠️ Only one coordinate provided (lat: ${latitude}, lng: ${longitude}). Both are required.`);
+      }
+      
       updateFields.push(`updated_at = NOW()`);
       updateValues.push(id);
       
@@ -646,6 +1201,16 @@ export const updateProperty = async (req, res) => {
               const photoUrl = photo.url || photo.photo_url || '';
               const photoName = photo.name || photo.photo_name || `photo_${i + 1}.jpg`;
               const photoSize = photo.size || photo.photo_size || 0;
+              
+              // Validate photo size (max 5MB base64)
+              if (photoUrl) {
+                const MAX_BASE64_SIZE = 5 * 1024 * 1024; // 5MB
+                if (photoUrl.length > MAX_BASE64_SIZE) {
+                  const sizeMB = (photoUrl.length / (1024 * 1024)).toFixed(2);
+                  console.error(`❌ PHOTO TOO LARGE: Photo ${i + 1} base64 size: ${sizeMB}MB`);
+                  throw new Error(`Photo ${i + 1} is too large (${sizeMB}MB). Maximum size is 5MB. Please compress or resize the image.`);
+                }
+              }
               
               if (photoUrl) {
                 await client.query(
@@ -830,7 +1395,15 @@ export const getPropertiesByOwner = async (req, res) => {
           ownerPreferredContact: property.owner_preferred_contact || property.ownerPreferredContact || 'email',
           submittedAt: property.submitted_at || property.submittedAt || property.created_at || property.createdAt,
           createdAt: property.created_at || property.createdAt,
-          updatedAt: property.updated_at || property.updatedAt
+          updatedAt: property.updated_at || property.updatedAt,
+          // Include latitude/longitude for map functionality
+          latitude: property.latitude || null,
+          longitude: property.longitude || null,
+          // Also include as coordinates object for convenience
+          coordinates: (property.latitude && property.longitude) ? {
+            lat: parseFloat(property.latitude),
+            lng: parseFloat(property.longitude)
+          } : null
         };
       })
     );

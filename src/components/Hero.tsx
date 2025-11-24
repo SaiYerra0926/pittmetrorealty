@@ -17,7 +17,6 @@ const Hero = () => {
     if (path.includes('/sell')) return 'sell';
     if (path.includes('/buy')) return 'buy';
     if (path.includes('/rent')) return 'rent';
-    if (path.includes('/manage')) return 'manage';
     return null; // No tab selected on landing page
   };
 
@@ -39,7 +38,7 @@ const Hero = () => {
     { id: "sell", label: "Sell", href: "/sell", icon: TrendingUp },
     { id: "buy", label: "Buy", href: "/buy", icon: Home },
     { id: "rent", label: "Rent", href: "/rent", icon: Building2 },
-    { id: "manage", label: "Manage", href: "/manage", icon: Users },
+    // Manage button hidden as per requirements
   ];
 
   const handleTabClick = (tabId: string) => {
@@ -95,11 +94,11 @@ const Hero = () => {
           </div>
 
           {/* Enhanced Category Selection Section - Professional UI/UX */}
-          <div className="bg-white/95 backdrop-blur-md rounded-xl sm:rounded-2xl p-2 sm:p-2.5 md:p-3 shadow-2xl border border-white/20 animate-scale-in mx-auto max-w-2xl w-full">
-            <p className="text-[10px] sm:text-xs md:text-sm text-gray-600 mb-2 sm:mb-2.5 md:mb-3 text-center font-semibold px-2">
+          <div className="bg-white/95 backdrop-blur-sm rounded-xl p-2 sm:p-2.5 shadow-xl border border-slate-200/60 animate-scale-in mx-auto max-w-xs sm:max-w-sm w-full">
+            <p className="text-[10px] sm:text-xs text-slate-600 mb-2 sm:mb-2.5 text-center font-medium px-1 tracking-tight">
               Select a category to search
             </p>
-            <div className="flex flex-nowrap justify-center items-center gap-1 sm:gap-1.5 md:gap-2 bg-transparent rounded-xl p-1.5 sm:p-2 md:p-2.5 w-full">
+            <div className="flex flex-nowrap justify-center items-stretch gap-1.5 sm:gap-2 bg-transparent rounded-lg p-1 w-full">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
@@ -107,23 +106,25 @@ const Hero = () => {
                   <button
                     key={tab.id}
                     onClick={() => handleTabClick(tab.id)}
-                    className={`flex-1 px-2 sm:px-3 md:px-4 py-2 sm:py-2.5 md:py-3 rounded-lg font-semibold transition-all duration-200 text-[9px] sm:text-[10px] md:text-xs flex items-center justify-center gap-1 sm:gap-1.5 touch-target min-h-[40px] sm:min-h-[44px] md:min-h-[48px] relative group ${
+                    className={`flex-1 px-1.5 sm:px-2 py-2 sm:py-2.5 rounded-lg font-medium transition-all duration-200 text-[10px] sm:text-xs flex flex-col items-center justify-center gap-1.5 touch-target min-h-[42px] sm:min-h-[48px] relative group bg-white border ${
                       isActive
-                        ? "bg-primary text-white shadow-md scale-[1.02] ring-1 ring-primary/50"
-                        : "bg-white/90 text-gray-600 hover:text-primary hover:bg-white hover:shadow-sm hover:scale-[1.02] border border-gray-200/50"
+                        ? "border-primary/60 text-primary shadow-sm scale-[1.03] bg-primary/8 ring-1 ring-primary/20"
+                        : "border-slate-200/80 text-slate-600 hover:text-primary hover:border-primary/50 hover:shadow-sm hover:scale-[1.02] hover:bg-slate-50/80"
                     }`}
                     aria-pressed={isActive}
                     title={`Click to explore ${tab.label.toLowerCase()} properties`}
                   >
-                    <Icon className={`w-2.5 h-2.5 sm:w-3 sm:h-3 md:w-3.5 md:h-3.5 flex-shrink-0 transition-transform duration-200 ${
-                      isActive ? 'text-white' : 'text-gray-500 group-hover:text-primary'
-                    }`} />
-                    <span className={`text-[9px] sm:text-[10px] md:text-xs font-semibold transition-colors duration-200 whitespace-nowrap ${
-                      isActive ? 'text-white' : 'text-gray-600 group-hover:text-primary'
+                    {/* Icon */}
+                    <div className={`transition-transform duration-200 ${isActive ? 'scale-105' : 'group-hover:scale-105'}`}>
+                      <Icon className={`w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0 transition-colors duration-200 ${
+                        isActive ? 'text-primary' : 'text-slate-500 group-hover:text-primary'
+                      }`} />
+                    </div>
+                    
+                    {/* Label */}
+                    <span className={`text-[10px] sm:text-xs font-semibold transition-colors duration-200 whitespace-nowrap ${
+                      isActive ? 'text-primary' : 'text-slate-600 group-hover:text-primary'
                     }`}>{tab.label}</span>
-                    {isActive && (
-                      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 sm:w-10 h-0.5 bg-white/80 rounded-full"></div>
-                    )}
                   </button>
                 );
               })}

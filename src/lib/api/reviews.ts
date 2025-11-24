@@ -1,5 +1,7 @@
 // API Service for Reviews
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://3.12.102.106:3001/api';
+// const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+
 
 export interface Review {
   id: number | string;
@@ -34,7 +36,7 @@ export interface NewReview {
   property_type?: string;
 }
 
-// Fetch all approved reviews
+// Fetch all approved reviews from database
 export const fetchReviews = async (): Promise<Review[]> => {
   try {
     const response = await fetch(`${API_BASE_URL}/reviews`);
@@ -53,12 +55,13 @@ export const fetchReviews = async (): Promise<Review[]> => {
     })) || [];
   } catch (error) {
     console.error('Error fetching reviews:', error);
-    // Return empty array on error, or fallback to localStorage
-    return getStoredReviews();
+    // Return empty array on error - don't use localStorage fallback
+    // This ensures we only show reviews from the database
+    return [];
   }
 };
 
-// Fetch review statistics
+// Fetch review statistics from database
 export const fetchReviewStats = async (): Promise<ReviewStats> => {
   try {
     const response = await fetch(`${API_BASE_URL}/reviews/stats`);
@@ -71,13 +74,21 @@ export const fetchReviewStats = async (): Promise<ReviewStats> => {
     return data;
   } catch (error) {
     console.error('Error fetching review stats:', error);
-    // Calculate stats from stored reviews as fallback
-    const reviews = getStoredReviews();
-    return calculateStats(reviews);
+    // Return empty stats on error - don't use localStorage fallback
+    // This ensures we only show stats from the database
+    return {
+      totalReviews: 0,
+      averageRating: 0,
+      fiveStarReviews: 0,
+      fourStarReviews: 0,
+      threeStarReviews: 0,
+      twoStarReviews: 0,
+      oneStarReviews: 0
+    };
   }
 };
 
-// Submit a new review
+// Submit a new review - stores directly in database
 export const submitReview = async (reviewData: NewReview): Promise<{ success: boolean; message: string; review?: Review }> => {
   try {
     const response = await fetch(`${API_BASE_URL}/reviews`, {
@@ -97,14 +108,12 @@ export const submitReview = async (reviewData: NewReview): Promise<{ success: bo
     
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ message: 'Failed to submit review' }));
-      throw new Error(errorData.message || 'Failed to submit review');
+      throw new Error(errorData.message || errorData.error || 'Failed to submit review');
     }
     
     const data = await response.json();
     
-    // Store review in localStorage as backup
-    storeReviewLocally(data.review);
-    
+    // Review is now stored in database via API
     return {
       success: true,
       message: data.message || 'Review submitted successfully!',
@@ -113,55 +122,13 @@ export const submitReview = async (reviewData: NewReview): Promise<{ success: bo
   } catch (error) {
     console.error('Error submitting review:', error);
     
-    // Fallback: Store in localStorage if API fails
-    const reviewId = Date.now();
-    const newReview: Review = {
-      id: reviewId,
-      name: reviewData.name,
-      email: reviewData.email,
-      location: reviewData.location,
-      rating: reviewData.rating,
-      text: reviewData.review_text,
-      review_text: reviewData.review_text,
-      property_type: reviewData.property_type,
-      created_at: new Date().toISOString(),
-      status: 'pending'
-    };
-    
-    storeReviewLocally(newReview);
-    
-    return {
-      success: true,
-      message: 'Review saved locally. It will be synced when the server is available.',
-      review: newReview
-    };
+    // Throw error instead of falling back to localStorage
+    throw error;
   }
 };
 
-// Local storage helpers (fallback when API is unavailable)
-const STORAGE_KEY = 'pittmetro_reviews';
-
-export const getStoredReviews = (): Review[] => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-  } catch (error) {
-    console.error('Error reading from localStorage:', error);
-  }
-  return [];
-};
-
-const storeReviewLocally = (review: Review): void => {
-  try {
-    const reviews = getStoredReviews();
-    reviews.unshift(review); // Add to beginning
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(reviews));
-  } catch (error) {
-    console.error('Error storing review locally:', error);
-  }
-};
+// Note: localStorage helpers removed - all reviews are now stored in database only
+// Reviews are fetched and stored directly via API calls to the backend
 
 // Calculate stats from reviews array
 export const calculateStats = (reviews: Review[]): ReviewStats => {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Search, MapPin, Home, DollarSign, Bed, Bath, Star, Calendar, Phone, User, Building2, Eye, CheckCircle, FileText, CreditCard, Key, TrendingUp } from "lucide-react";
 import PropertyDetailsModal from "@/components/PropertyDetailsModal";
 import { Button } from "@/components/ui/button";
@@ -9,9 +9,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { PropertiesAPI } from "@/lib/api/properties";
+import { emailAPI } from "@/lib/api/email";
+import { useToast } from "@/hooks/use-toast";
 
 const Buy = () => {
   const [selectedProperty, setSelectedProperty] = useState<any | null>(null);
+  const [properties, setProperties] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const propertiesApi = new PropertiesAPI();
+  const { toast } = useToast();
   const [buyerInfo, setBuyerInfo] = useState({
     firstName: "",
     lastName: "",
@@ -28,146 +36,131 @@ const Buy = () => {
     additionalInfo: ""
   });
 
-  const properties = [
-    {
-      id: 1,
-      price: "$850,000",
-      address: "123 Oak Street, Shadyside, Pittsburgh",
-      bedrooms: 4,
-      bathrooms: 3,
-      sqft: "2,500",
-      type: "Single Family",
-      yearBuilt: 2018,
-      features: ["Garage", "Garden", "Updated Kitchen", "Hardwood Floors", "Central AC"],
+  useEffect(() => {
+    const fetchBuyProperties = async () => {
+      try {
+        setIsLoading(true);
+        // Fetch active properties for sale (listingType: 'sell' shows properties available to buy)
+        const response = await propertiesApi.getProperties({ 
+          status: 'active',
+          listingType: 'sell'
+        });
+        
+        // Map API response to component format
+        const mappedProperties = (response.listings || []).map((listing: any) => ({
+          id: listing.id,
+          price: listing.price ? `$${listing.price.toLocaleString()}` : 'Price on request',
+          address: listing.address || '',
+          city: listing.city || '',
+          state: listing.state || '',
+          zipCode: listing.zipCode || listing.zip_code || '',
+          bedrooms: listing.bedrooms || 0,
+          bathrooms: listing.bathrooms || 0,
+          sqft: listing.squareFeet ? listing.squareFeet.toLocaleString() : '0',
+          type: listing.propertyType || '',
+          yearBuilt: listing.yearBuilt || null,
+          features: listing.features || [],
       status: "For Sale",
-      daysOnMarket: 12,
-      rating: 4.8,
-      agent: "Sarah Johnson",
-      agentPhone: "(412) 555-0101",
-      agentEmail: "sarah@pittmetro.com",
+          rating: 4.5,
+          agent: listing.agent_first_name && listing.agent_last_name 
+            ? `${listing.agent_first_name} ${listing.agent_last_name}`
+            : "Pitt Metro Realty",
+          agentPhone: listing.agent_phone || "(412) 555-0100",
+          agentEmail: listing.agent_email || "info@pittmetro.com",
       owner: {
-        name: "Michael & Jennifer Chen",
-        phone: "(412) 555-0201",
-        email: "chen.family@email.com",
-        preferredContact: "phone",
-        reasonForSelling: "Relocating for work",
-        timeOwned: "3 years",
-        propertyCondition: "Excellent"
+            name: listing.ownerName || (listing.owner_first_name && listing.owner_last_name 
+              ? `${listing.owner_first_name} ${listing.owner_last_name}`
+              : 'Property Owner'),
+            phone: listing.ownerPhone || listing.owner_phone || '',
+            email: listing.ownerEmail || listing.owner_email || '',
+            preferredContact: listing.ownerPreferredContact || 'email',
+            reasonForSelling: "Contact owner for details",
+            timeOwned: "Contact owner for details",
+            propertyCondition: "Contact owner for details"
       },
-      description: "Beautiful single-family home in the heart of Shadyside. Features modern kitchen with granite countertops, spacious living areas, and a private backyard perfect for entertaining.",
-      highlights: ["Recently renovated", "Prime location", "Excellent schools nearby", "Walk to shops and restaurants"],
-      propertyTax: "$8,500/year",
-      hoaFee: "None",
-      utilities: "Gas heating, Central AC, City water/sewer",
-      mortgageInfo: "Seller financing available",
-      specialTerms: "Flexible closing date"
-    },
-    {
-      id: 2,
-      price: "$675,000",
-      address: "456 Maple Avenue, Squirrel Hill, Pittsburgh",
-      bedrooms: 3,
-      bathrooms: 2,
-      sqft: "1,800",
-      type: "Townhouse",
-      yearBuilt: 2020,
-      features: ["Balcony", "Modern Design", "Parking", "In-unit Laundry", "Pet Friendly"],
-      status: "For Sale",
-      daysOnMarket: 8,
-      rating: 4.9,
-      agent: "David Rodriguez",
-      agentPhone: "(412) 555-0102",
-      agentEmail: "david@pittmetro.com",
-      owner: {
-        name: "Lisa Thompson",
-        phone: "(412) 555-0202",
-        email: "lisa.thompson@email.com",
-        preferredContact: "email",
-        reasonForSelling: "Downsizing",
-        timeOwned: "2 years",
-        propertyCondition: "Like new"
-      },
-      description: "Contemporary townhouse with open-concept living, modern finishes, and convenient access to public transportation and local amenities.",
-      highlights: ["New construction", "Energy efficient", "Low maintenance", "Great investment potential"],
-      propertyTax: "$6,200/year",
-      hoaFee: "$150/month",
-      utilities: "Electric heating, Central AC, City water/sewer",
-      mortgageInfo: "Conventional financing preferred",
-      specialTerms: "Quick closing preferred"
-    },
-    {
-      id: 3,
-      price: "$1,200,000",
-      address: "789 Pine Road, Mount Lebanon, Pittsburgh",
-      bedrooms: 5,
-      bathrooms: 4,
-      sqft: "3,200",
-      type: "Single Family",
-      yearBuilt: 2015,
-      features: ["Pool", "Fireplace", "Walk-in Closet", "Finished Basement", "Three-Car Garage"],
-      status: "For Sale",
-      daysOnMarket: 15,
-      rating: 4.7,
-      agent: "Emily Chen",
-      agentPhone: "(412) 555-0103",
-      agentEmail: "emily@pittmetro.com",
-      owner: {
-        name: "Robert & Patricia Williams",
-        phone: "(412) 555-0203",
-        email: "williams.family@email.com",
-        preferredContact: "phone",
-        reasonForSelling: "Retirement downsizing",
-        timeOwned: "8 years",
-        propertyCondition: "Excellent"
-      },
-      description: "Luxury family home with resort-style amenities. Features a stunning pool area, gourmet kitchen, and spacious master suite with walk-in closet.",
-      highlights: ["Luxury finishes", "Pool and spa", "Large lot", "Premium neighborhood"],
-      propertyTax: "$12,800/year",
-      hoaFee: "None",
-      utilities: "Gas heating, Central AC, Well water, Septic system",
-      mortgageInfo: "Cash offers preferred",
-      specialTerms: "Seller will consider rent-back"
-    }
-  ];
+          description: listing.description || '',
+          highlights: listing.features?.slice(0, 4) || [],
+          propertyTax: "Contact for details",
+          hoaFee: "Contact for details",
+          utilities: "Contact for details",
+          mortgageInfo: "Contact for details",
+          specialTerms: "Contact for details",
+          photos: listing.photos || [],
+          image: listing.photos && listing.photos.length > 0 
+            ? (listing.photos[0].url || listing.photos[0].photo_url || '')
+            : '',
+          images: listing.photos && listing.photos.length > 0
+            ? listing.photos.map((p: any) => p.url || p.photo_url || '').filter(Boolean)
+            : [],
+          // Include coordinates for map display
+          latitude: listing.latitude || listing.coordinates?.lat,
+          longitude: listing.longitude || listing.coordinates?.lng,
+          coordinates: listing.latitude && listing.longitude 
+            ? { lat: listing.latitude, lng: listing.longitude }
+            : listing.coordinates
+        }));
+        
+        setProperties(mappedProperties);
+      } catch (error) {
+        console.error('Error fetching buy properties:', error);
+        setProperties([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchBuyProperties();
+  }, []);
+
+  // Helper function to get image source (handles base64 and URLs)
+  const getImageSrc = (image: string) => {
+    if (!image) return '';
+    // Already a data URL (base64 with prefix)
+    if (image.startsWith('data:image')) return image;
+    // Regular HTTP/HTTPS URL
+    if (image.startsWith('http://') || image.startsWith('https://')) return image;
+    // Assume it's base64 without prefix, add the prefix
+    return `data:image/jpeg;base64,${image}`;
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-50 to-slate-100">
       {/* Hero Section */}
-      <section className="relative pt-20 sm:pt-22 md:pt-24 pb-8 sm:pb-10 md:pb-12 bg-gradient-to-br from-primary via-primary-light to-primary text-white overflow-hidden safe-top">
-        <div className="absolute inset-0 opacity-10">
+      <section className="relative pt-16 sm:pt-18 md:pt-20 pb-6 sm:pb-8 md:pb-10 bg-gradient-to-br from-primary via-primary-light to-primary text-white overflow-hidden safe-top">
+        <div className="absolute inset-0 opacity-5">
           <div className="absolute top-0 left-0 w-full h-full bg-[url('data:image/svg+xml,%3Csvg%20width%3D%2260%22%20height%3D%2260%22%20viewBox%3D%220%200%2060%2060%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cg%20fill%3D%22none%22%20fill-rule%3D%22evenodd%22%3E%3Cg%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.1%22%3E%3Ccircle%20cx%3D%2230%22%20cy%3D%2230%22%20r%3D%222%22/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')]"></div>
         </div>
         
-        <div className="max-w-5xl mx-auto px-3 sm:px-4 md:px-5 lg:px-6 relative z-10">
-          <div className="text-center max-w-3xl mx-auto">
-            <div className="inline-flex items-center gap-2 sm:gap-2.5 px-3 sm:px-4 py-1.5 sm:py-2 bg-white/10 backdrop-blur-sm rounded-full text-xs sm:text-sm md:text-base font-medium mb-4 sm:mb-5 md:mb-6">
-              <Home className="h-4 w-4 sm:h-5 sm:w-5 flex-shrink-0" />
+        <div className="max-w-4xl mx-auto px-4 sm:px-5 md:px-6 relative z-10">
+          <div className="text-center max-w-2xl mx-auto">
+            <div className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-1 sm:py-1.5 bg-white/15 backdrop-blur-md rounded-full text-xs sm:text-sm font-semibold mb-3 sm:mb-4 shadow-sm border border-white/20">
+              <Home className="h-3.5 w-3.5 sm:h-4 sm:w-4 flex-shrink-0" />
               <span>Find Your Dream Home</span>
             </div>
             
-            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold mb-3 sm:mb-4 md:mb-5 leading-tight px-2">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold mb-2 sm:mb-3 leading-tight px-2 tracking-tight">
               Discover Your Perfect
-              <span className="block bg-gradient-to-r from-yellow-300 to-orange-300 bg-clip-text text-transparent">
+              <span className="block bg-gradient-to-r from-yellow-300 via-yellow-200 to-orange-300 bg-clip-text text-transparent mt-1">
                 Home Today
               </span>
             </h1>
             
-            <p className="text-sm sm:text-base md:text-lg lg:text-xl text-white/90 mb-4 sm:mb-5 md:mb-6 leading-relaxed max-w-2xl mx-auto px-4">
+            <p className="text-xs sm:text-sm md:text-base text-white/90 mb-4 sm:mb-5 leading-relaxed max-w-xl mx-auto px-3 font-light">
               Explore premium properties in Pittsburgh with expert guidance, 
               transparent pricing, and exceptional service.
             </p>
             
-            <div className="flex flex-wrap justify-center gap-2.5 sm:gap-3 md:gap-4 px-2">
-              <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-white/10 backdrop-blur-sm rounded-full touch-target">
-                <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 text-green-300 flex-shrink-0" />
+            <div className="flex flex-wrap justify-center gap-2 sm:gap-2.5 px-2">
+              <div className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-white/15 backdrop-blur-md rounded-full touch-target border border-white/20 shadow-sm hover:bg-white/20 transition-all duration-200">
+                <CheckCircle className="h-3.5 w-3.5 text-green-300 flex-shrink-0" />
                 <span className="font-medium text-xs sm:text-sm">Verified Properties</span>
               </div>
-              <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-white/10 backdrop-blur-sm rounded-full touch-target">
-                <Calendar className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-300 flex-shrink-0" />
+              <div className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-white/15 backdrop-blur-md rounded-full touch-target border border-white/20 shadow-sm hover:bg-white/20 transition-all duration-200">
+                <Calendar className="h-3.5 w-3.5 text-yellow-300 flex-shrink-0" />
                 <span className="font-medium text-xs sm:text-sm">Quick Process</span>
               </div>
-              <div className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-white/10 backdrop-blur-sm rounded-full touch-target">
-                <User className="h-3 w-3 sm:h-4 sm:w-4 text-blue-300 flex-shrink-0" />
+              <div className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-white/15 backdrop-blur-md rounded-full touch-target border border-white/20 shadow-sm hover:bg-white/20 transition-all duration-200">
+                <User className="h-3.5 w-3.5 text-blue-300 flex-shrink-0" />
                 <span className="font-medium text-xs sm:text-sm">Expert Agents</span>
               </div>
             </div>
@@ -328,31 +321,83 @@ const Buy = () => {
 
                   <Button 
                     type="submit" 
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.preventDefault();
-                      // Handle form submission
-                      console.log('Buyer information submitted:', buyerInfo);
-                      alert('Thank you! Your information has been submitted. We will contact you soon.');
-                      setBuyerInfo({
-                        firstName: "",
-                        lastName: "",
-                        email: "",
-                        phone: "",
-                        budget: "",
-                        timeline: "",
-                        propertyType: "",
-                        bedrooms: "",
-                        bathrooms: "",
-                        preferredAreas: "",
-                        financing: "",
-                        firstTimeBuyer: false,
-                        additionalInfo: ""
-                      });
+                      
+                      // Basic validation
+                      if (!buyerInfo.firstName || !buyerInfo.lastName || !buyerInfo.email || !buyerInfo.phone) {
+                        toast({
+                          title: "Validation Error",
+                          description: "Please fill in all required fields (First Name, Last Name, Email, Phone).",
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+
+                      setIsSubmitting(true);
+                      
+                      try {
+                        console.log('Sending buy inquiry email:', buyerInfo);
+                        
+                        await emailAPI.sendBuyInquiry({
+                          firstName: buyerInfo.firstName,
+                          lastName: buyerInfo.lastName,
+                          email: buyerInfo.email,
+                          phone: buyerInfo.phone,
+                          budget: buyerInfo.budget || '',
+                          timeline: buyerInfo.timeline || '',
+                          preferredAreas: buyerInfo.preferredAreas || '',
+                          firstTimeBuyer: buyerInfo.firstTimeBuyer,
+                          additionalInfo: buyerInfo.additionalInfo || ''
+                        });
+
+                        toast({
+                          title: "Application Submitted Successfully!",
+                          description: "Thank you! Your information has been submitted. We will contact you soon.",
+                          variant: "default",
+                        });
+
+                        // Reset form
+                        setBuyerInfo({
+                          firstName: "",
+                          lastName: "",
+                          email: "",
+                          phone: "",
+                          budget: "",
+                          timeline: "",
+                          propertyType: "",
+                          bedrooms: "",
+                          bathrooms: "",
+                          preferredAreas: "",
+                          financing: "",
+                          firstTimeBuyer: false,
+                          additionalInfo: ""
+                        });
+                      } catch (error: any) {
+                        console.error('Error submitting form:', error);
+                        toast({
+                          title: "Submission Failed",
+                          description: error.message || "Failed to submit your information. Please try again or contact us directly.",
+                          variant: "destructive",
+                        });
+                      } finally {
+                        setIsSubmitting(false);
+                      }
                     }}
-                    className="w-full h-12 text-sm sm:text-base font-semibold bg-primary hover:bg-primary/90 shadow-lg touch-target min-h-[48px]"
+                    disabled={isSubmitting}
+                    className="w-full h-12 text-sm sm:text-base font-semibold bg-primary hover:bg-primary/90 shadow-lg touch-target min-h-[48px] disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <FileText className="h-5 w-5 mr-2" />
-                    Submit Buyer Information
+                    {isSubmitting ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        Sending...
+                      </>
+                    ) : (
+                      <>
+                        <FileText className="h-5 w-5 mr-2" />
+                        Submit Buyer Information
+                      </>
+                    )}
                   </Button>
                 </form>
               </CardContent>
@@ -373,26 +418,47 @@ const Buy = () => {
             </p>
           </div>
 
+          {isLoading ? (
+            <div className="text-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+              <p className="text-gray-600">Loading properties...</p>
+            </div>
+          ) : properties.length === 0 ? (
+            <div className="text-center py-12">
+              <Home className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+              <p className="text-gray-600">No properties available at the moment.</p>
+            </div>
+          ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 md:gap-5 lg:gap-6 items-stretch">
             {properties.map((property) => (
               <Card key={property.id} className="group hover:shadow-2xl transition-all duration-300 overflow-hidden bg-white/90 backdrop-blur-sm border border-slate-200/50 shadow-md hover:-translate-y-1">
-                <div className="relative">
-                  {/* Beautiful Property Header */}
-                  <div className="w-full h-40 sm:h-44 md:h-48 bg-gradient-to-br from-primary/10 via-primary/5 to-slate-50 flex items-center justify-center relative">
-                    <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-transparent"></div>
-                    <div className="relative z-10 text-center">
-                      <div className="w-16 h-16 sm:w-18 sm:h-18 md:w-20 md:h-20 bg-primary/20 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-3">
-                        <Home className="h-8 w-8 sm:h-9 sm:w-9 md:h-10 md:w-10 text-primary" />
-                      </div>
-                      <div className="text-base sm:text-lg font-bold text-slate-800">{property.type}</div>
-                      <div className="text-xs sm:text-sm text-slate-600">{property.yearBuilt}</div>
+                  <div className="relative overflow-hidden">
+                    {property.image ? (
+                      <img
+                        src={getImageSrc(property.image)}
+                        alt={property.address}
+                        className="w-full h-72 object-cover group-hover:scale-105 transition-transform duration-500"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                          const fallback = e.currentTarget.nextElementSibling as HTMLElement;
+                          if (fallback) fallback.classList.remove('hidden');
+                        }}
+                      />
+                    ) : null}
+                    <div className={`w-full h-72 bg-gradient-to-br from-slate-200 via-slate-300 to-slate-400 flex items-center justify-center ${property.image ? 'hidden' : ''}`}>
+                      <Home className="h-20 w-20 text-slate-500" />
                     </div>
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"></div>
                     {/* Listing Type Icon Badge */}
-                    <div className="absolute top-2 sm:top-3 left-2 sm:left-3 z-10 flex items-center gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg backdrop-blur-sm shadow-lg bg-blue-500/95 text-white hover:bg-blue-600/95 transition-all duration-300">
-                      <Home className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" />
-                      <span className="text-[10px] sm:text-xs font-semibold uppercase tracking-wide">Buy</span>
+                    <div className="absolute top-4 left-4 z-10 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg backdrop-blur-sm shadow-lg bg-blue-500/95 text-white hover:bg-blue-600/95 transition-all duration-300">
+                      <Home className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="text-xs font-semibold uppercase tracking-wide">Buy</span>
                     </div>
-                    <Badge variant="outline" className="absolute bottom-2 sm:bottom-3 md:bottom-4 left-2 sm:left-3 md:left-4 bg-white/90 text-slate-700 shadow-sm text-xs sm:text-sm px-2 sm:px-2.5 md:px-3 py-0.5 sm:py-1">
+                    <div className="absolute bottom-4 left-4 right-4">
+                      <div className="text-2xl sm:text-3xl font-bold text-white drop-shadow-lg mb-1">
+                        {property.price}
+                      </div>
+                      <Badge variant="outline" className="bg-white/90 text-slate-700 shadow-sm text-xs sm:text-sm px-2 sm:px-2.5 md:px-3 py-0.5 sm:py-1">
                       {property.type}
                     </Badge>
                   </div>
@@ -400,9 +466,6 @@ const Buy = () => {
                 
                 <CardContent className="p-3 sm:p-4 md:p-5 lg:p-6">
                   <div className="flex flex-col sm:flex-row justify-between items-start gap-2 sm:gap-0 mb-4 sm:mb-5 md:mb-6">
-                    <div className="text-lg sm:text-xl md:text-2xl font-bold text-primary">
-                      {property.price}
-                    </div>
                     <div className="flex items-center gap-1">
                       <Star className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-400 fill-current flex-shrink-0" />
                       <span className="text-xs sm:text-sm text-slate-600 font-medium">{property.rating}</span>
@@ -508,12 +571,11 @@ const Buy = () => {
                   </div>
 
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 sm:gap-0 pt-4 sm:pt-5 md:pt-6 border-t border-slate-200">
-                    <div className="text-xs sm:text-sm text-slate-600">
-                      Listed {property.daysOnMarket} days ago
-                    </div>
+                    {property.yearBuilt && (
                     <div className="text-xs sm:text-sm font-medium text-slate-800">
                       Built {property.yearBuilt}
                     </div>
+                    )}
                   </div>
 
                   <div className="flex flex-col sm:flex-row gap-3 mt-6">
@@ -540,6 +602,7 @@ const Buy = () => {
               </Card>
             ))}
           </div>
+          )}
         </div>
       </section>
 

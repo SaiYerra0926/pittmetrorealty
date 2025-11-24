@@ -9,9 +9,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { emailAPI } from "@/lib/api/email";
+import { useToast } from "@/hooks/use-toast";
 
 const Sell = () => {
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { toast } = useToast();
   const [formData, setFormData] = useState({
     // Personal Information
     firstName: '',
@@ -51,10 +55,51 @@ const Sell = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = () => {
-    if (validateForm()) {
-      console.log('Form submitted:', formData);
-      alert('Thank you! We will contact you within 24 hours to discuss your property sale.');
+  const handleSubmit = async () => {
+    if (!validateForm()) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    
+    try {
+      console.log('Sending sell inquiry email:', formData);
+      
+      await emailAPI.sendSellInquiry({
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        email: formData.email,
+        phone: formData.phone,
+        preferredContact: formData.preferredContact as 'email' | 'phone' | 'text',
+        description: formData.description
+      });
+
+      toast({
+        title: "Application Submitted Successfully!",
+        description: "Thank you! We will contact you within 24 hours to discuss your property sale.",
+        variant: "default",
+      });
+
+      // Reset form
+      setFormData({
+        firstName: '',
+        lastName: '',
+        email: '',
+        phone: '',
+        preferredContact: 'email',
+        description: '',
+      });
+      setErrors({});
+      
+    } catch (error: any) {
+      console.error('Error submitting form:', error);
+      toast({
+        title: "Submission Failed",
+        description: error.message || "Failed to submit your application. Please try again or contact us directly.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -279,10 +324,20 @@ const Sell = () => {
               <div className="flex justify-center pt-6 border-t border-slate-200">
                 <Button 
                   onClick={handleSubmit}
-                  className="px-8 py-2.5 h-12 bg-gradient-to-r from-primary to-primary-light hover:from-primary/90 hover:to-primary-light/90 transition-all duration-300 shadow-lg hover:shadow-xl text-sm sm:text-base font-semibold min-h-[48px] touch-target"
+                  disabled={isSubmitting}
+                  className="px-8 py-2.5 h-12 bg-gradient-to-r from-primary to-primary-light hover:from-primary/90 hover:to-primary-light/90 transition-all duration-300 shadow-lg hover:shadow-xl text-sm sm:text-base font-semibold min-h-[48px] touch-target disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Submit Application
-                  <ArrowRight className="h-4 w-4 sm:h-5 sm:w-5 ml-2" />
+                  {isSubmitting ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      Submit Application
+                      <ArrowRight className="h-4 w-4 sm:h-5 sm:w-5 ml-2" />
+                    </>
+                  )}
                 </Button>
               </div>
             </CardContent>

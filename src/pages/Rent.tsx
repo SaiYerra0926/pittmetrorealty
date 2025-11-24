@@ -6,12 +6,16 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import AddressAutocomplete from "@/components/AddressAutocomplete";
 import { PropertiesAPI } from "@/lib/api/properties";
 
 const Rent = () => {
   const [selectedProperty, setSelectedProperty] = useState<any | null>(null);
   const [searchFilters, setSearchFilters] = useState({
     location: "",
+    city: "",
+    state: "",
+    zipCode: "",
     priceMin: "",
     priceMax: "",
     bedrooms: "",
@@ -44,6 +48,9 @@ const Rent = () => {
           price: listing.price ? `$${listing.price.toLocaleString()}` : 'Price on request',
           period: "/month",
           address: listing.address || '',
+          city: listing.city || '',
+          state: listing.state || '',
+          zipCode: listing.zipCode || listing.zip_code || '',
           bedrooms: listing.bedrooms || 0,
           bathrooms: listing.bathrooms || 0,
           sqft: listing.squareFeet ? listing.squareFeet.toLocaleString() : '0',
@@ -58,7 +65,16 @@ const Rent = () => {
           agent: "Pitt Metro Realty",
           deposit: listing.price ? `$${Math.round(listing.price * 0.1).toLocaleString()}` : '$0',
           description: listing.description || '',
-          photos: listing.photos || []
+          photos: listing.photos || [],
+          images: listing.photos && listing.photos.length > 0
+            ? listing.photos.map((p: any) => p.url || p.photo_url || '').filter(Boolean)
+            : [],
+          // Include coordinates for map display
+          latitude: listing.latitude || listing.coordinates?.lat,
+          longitude: listing.longitude || listing.coordinates?.lng,
+          coordinates: listing.latitude && listing.longitude 
+            ? { lat: listing.latitude, lng: listing.longitude }
+            : listing.coordinates
         }));
         
         setRentalProperties(mappedProperties);
@@ -83,16 +99,42 @@ const Rent = () => {
 
   // Static rental properties removed - now fetching from API
 
-  const handleSearch = () => {
+  // Helper function to perform search with given filters
+  const performSearch = (filters = searchFilters) => {
     // Filter properties based on search criteria
     let filtered = [...rentalProperties];
 
-    // Filter by location
-    if (searchFilters.location.trim()) {
-      const locationLower = searchFilters.location.toLowerCase().trim();
-      filtered = filtered.filter(property =>
-        property.address.toLowerCase().includes(locationLower)
-      );
+    // Filter by location - search in address, city, state, and ZIP code
+    if (searchFilters.location.trim() || searchFilters.city || searchFilters.state || searchFilters.zipCode) {
+      const locationLower = (searchFilters.location || '').toLowerCase().trim();
+      const cityLower = (searchFilters.city || '').toLowerCase().trim();
+      const stateLower = (searchFilters.state || '').toLowerCase().trim();
+      const zipCodeLower = (searchFilters.zipCode || '').toLowerCase().trim();
+      
+      filtered = filtered.filter(property => {
+        const propertyAddress = (property.address || '').toLowerCase();
+        const propertyCity = (property.city || '').toLowerCase();
+        const propertyState = (property.state || '').toLowerCase();
+        const propertyZipCode = (property.zipCode || '').toLowerCase();
+        
+        // If specific city, state, or ZIP is provided, match those (case-insensitive partial match)
+        if (cityLower && !propertyCity.includes(cityLower) && !cityLower.includes(propertyCity)) return false;
+        if (stateLower && !propertyState.includes(stateLower) && !stateLower.includes(propertyState)) return false;
+        if (zipCodeLower && propertyZipCode !== zipCodeLower) return false;
+        
+        // If general location search is provided, search in address, city, state, or ZIP
+        if (locationLower) {
+          return propertyAddress.includes(locationLower) || 
+                 propertyCity.includes(locationLower) ||
+                 propertyState.includes(locationLower) ||
+                 propertyZipCode.includes(locationLower) ||
+                 locationLower.includes(propertyCity) ||
+                 locationLower.includes(propertyState);
+        }
+        
+        // If only city/state/zip filters are set, return true if they match
+        return true;
+      });
     }
 
     // Filter by price range
@@ -160,10 +202,17 @@ const Rent = () => {
     }, 100);
   };
 
+  const handleSearch = () => {
+    performSearch();
+  };
+
   // Clear search and show all properties
   const handleClearSearch = () => {
     setSearchFilters({
       location: "",
+      city: "",
+      state: "",
+      zipCode: "",
       priceMin: "",
       priceMax: "",
       bedrooms: "",
@@ -251,28 +300,45 @@ const Rent = () => {
               <div className="space-y-4 sm:space-y-5 md:space-y-6">
                 {/* Main Search */}
                 <div className="relative">
-                  <MapPin className="absolute left-3 sm:left-4 top-1/2 transform -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6 text-gray-400 z-10" />
-                  <Input
-                    placeholder="Enter city, neighborhood, or ZIP code"
-                    className="pl-10 sm:pl-12 md:pl-14 pr-24 sm:pr-28 md:pr-32 h-11 sm:h-12 md:h-14 text-sm sm:text-base border-2 border-gray-200 focus:border-primary rounded-lg sm:rounded-xl shadow-sm touch-target min-h-[48px]"
-                    value={searchFilters.location}
-                    onChange={(e) => setSearchFilters({...searchFilters, location: e.target.value})}
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter') {
+                  <div className="relative">
+                    <MapPin className="absolute left-3 sm:left-4 top-1/2 transform -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6 text-gray-400 z-10 pointer-events-none" />
+                    <AddressAutocomplete
+                      id="rent-search-location"
+                      value={searchFilters.location}
+                      onChange={(value) => setSearchFilters({...searchFilters, location: value})}
+                      onPlaceSelect={(place) => {
+                        // Update search filters with selected place details
+                        const updatedFilters = {
+                          ...searchFilters,
+                          location: place.formattedAddress || place.address || place.city || searchFilters.location,
+                          city: place.city || '',
+                          state: place.state || '',
+                          zipCode: place.zipCode || ''
+                        };
+                        setSearchFilters(updatedFilters);
+                        console.log('📍 Place selected for search:', place);
+                        
+                        // Automatically trigger search with updated filters
+                        setTimeout(() => {
+                          performSearch(updatedFilters);
+                        }, 100);
+                      }}
+                      placeholder="Enter city, neighborhood, or ZIP code"
+                      className="pl-10 sm:pl-12 md:pl-14 pr-24 sm:pr-28 md:pr-32 h-11 sm:h-12 md:h-14 text-sm sm:text-base border-2 border-gray-200 focus:border-primary rounded-lg sm:rounded-xl shadow-sm touch-target min-h-[48px]"
+                      types={['geocode', 'address', '(cities)']}
+                      componentRestrictions={{ country: 'us' }}
+                    />
+                    <Button 
+                      size="lg" 
+                      onClick={() => {
                         handleSearch();
-                      }
-                    }}
-                  />
-                  <Button 
-                    size="lg" 
-                    onClick={() => {
-                      handleSearch();
-                    }}
-                    className="absolute right-2 sm:right-3 top-1/2 transform -translate-y-1/2 h-9 sm:h-10 md:h-12 px-4 sm:px-5 md:px-6 text-xs sm:text-sm md:text-base bg-primary hover:bg-primary/90 rounded-lg sm:rounded-xl touch-target min-h-[40px] sm:min-h-[44px]"
-                  >
-                    <Search className="h-3 w-3 sm:h-4 sm:w-4 md:mr-2 flex-shrink-0" />
-                    <span className="hidden sm:inline">Search</span>
-                  </Button>
+                      }}
+                      className="absolute right-2 sm:right-3 top-1/2 transform -translate-y-1/2 h-9 sm:h-10 md:h-12 px-4 sm:px-5 md:px-6 text-xs sm:text-sm md:text-base bg-primary hover:bg-primary/90 rounded-lg sm:rounded-xl touch-target min-h-[40px] sm:min-h-[44px] z-10"
+                    >
+                      <Search className="h-3 w-3 sm:h-4 sm:w-4 md:mr-2 flex-shrink-0" />
+                      <span className="hidden sm:inline">Search</span>
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Filters */}

@@ -201,7 +201,7 @@ const ReviewsSection = () => {
           </Card>
           <Card className="shadow-professional hover:shadow-professional-hover section-transition text-center p-4">
             <CardTitle className="text-xl sm:text-2xl md:text-3xl font-bold text-primary mb-1.5">
-              {loading ? <Loader2 className="h-6 w-6 animate-spin mx-auto" /> : stats.averageRating.toFixed(1)}
+              {loading ? <Loader2 className="h-6 w-6 animate-spin mx-auto" /> : stats.averageRating?.toFixed(1)}
             </CardTitle>
             <p className="text-muted-foreground text-sm">Average Rating</p>
           </Card>
@@ -270,7 +270,9 @@ const ReviewsSection = () => {
                       <div className="flex items-center gap-2">
                         <h4 className="font-semibold text-slate-800 truncate">{review.name}</h4>
                         {review.is_verified && (
-                          <CheckCircle className="h-4 w-4 text-primary flex-shrink-0" title="Verified Review" />
+                          <span title="Verified Review" className="flex-shrink-0">
+                            <CheckCircle className="h-4 w-4 text-primary" />
+                          </span>
                         )}
                       </div>
                       {review.location && (

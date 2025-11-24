@@ -7,6 +7,7 @@ import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LazyLoadImage } from 'react-lazy-load-image-component';
 import 'react-lazy-load-image-component/src/effects/blur.css';
+import PropertyLocationMap from '@/components/PropertyLocationMap';
 
 interface Property {
   id: number | string;
@@ -44,6 +45,12 @@ interface Property {
   city?: string;
   state?: string;
   zipCode?: string;
+  latitude?: number;
+  longitude?: number;
+  coordinates?: {
+    lat: number;
+    lng: number;
+  };
   [key: string]: any;
 }
 
@@ -66,7 +73,12 @@ const PropertyDetailsModal = ({ property, open, onClose }: PropertyDetailsModalP
 
   if (!property) return null;
 
-  const images = property.images || (property.image ? [property.image] : []);
+  // Support multiple photo formats: property.images, property.photos, or property.image
+  const images = property.images || 
+    (property.photos && property.photos.length > 0 
+      ? property.photos.map((p: any) => p.url || p.photo_url || '').filter(Boolean)
+      : []) ||
+    (property.image ? [property.image] : []);
   const hasMultipleImages = images.length > 1;
 
   const nextImage = () => {
@@ -162,7 +174,16 @@ const PropertyDetailsModal = ({ property, open, onClose }: PropertyDetailsModalP
             {images.length > 0 ? (
               <>
                 <LazyLoadImage
-                  src={images[currentImageIndex]}
+                  src={(() => {
+                    const img = images[currentImageIndex];
+                    if (!img) return '';
+                    // Already a data URL (base64 with prefix)
+                    if (img.startsWith('data:image')) return img;
+                    // Regular HTTP/HTTPS URL
+                    if (img.startsWith('http://') || img.startsWith('https://')) return img;
+                    // Assume it's base64 without prefix, add the prefix
+                    return `data:image/jpeg;base64,${img}`;
+                  })()}
                   alt={property.address}
                   effect="blur"
                   className="w-full h-full object-cover"
@@ -415,12 +436,16 @@ const PropertyDetailsModal = ({ property, open, onClose }: PropertyDetailsModalP
                           )}
                         </div>
                       </div>
-                      <div className="h-32 bg-gradient-to-br from-slate-100 to-slate-200 rounded-lg flex items-center justify-center border border-dashed border-slate-300">
-                        <div className="text-center">
-                          <MapPin className="h-8 w-8 text-slate-400 mx-auto mb-2" />
-                          <p className="text-xs text-slate-500 font-medium">Map View</p>
-                        </div>
-                      </div>
+                      <PropertyLocationMap
+                        latitude={property.latitude || property.coordinates?.lat || undefined}
+                        longitude={property.longitude || property.coordinates?.lng || undefined}
+                        address={property.address || ''}
+                        city={property.city || ''}
+                        state={property.state || ''}
+                        zipCode={property.zipCode || property.zip_code || ''}
+                        height="h-64"
+                        className="w-full"
+                      />
                     </CardContent>
                   </Card>
                 </TabsContent>

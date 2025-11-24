@@ -85,45 +85,106 @@ export class PropertiesAPI {
     }
   }
 
-  private async fetchData<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  private async fetchData<T>(endpoint: string, options?: RequestInit, retries: number = 1): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
-    try {
-      const response = await fetch(url, {
-        ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          ...options?.headers,
-        },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: `API error: ${response.statusText}` }));
-        throw new Error(errorData.message || `API error: ${response.statusText}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      // Handle network errors (e.g., server not running, CORS, connection refused)
-      if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('Failed to fetch'))) {
-        console.error(`Network error fetching from ${url}:`, error.message);
+    let lastError: Error | null = null;
+    
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        // Add timeout to prevent hanging requests
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
         
-        // Provide more helpful error message
-        const isLocalhost = this.baseUrl.includes('localhost') || this.baseUrl.includes('127.0.0.1');
-        const errorMessage = isLocalhost
-          ? `Unable to connect to API server at ${this.baseUrl}. Please ensure the server is running with "npm run server" or "npm start".`
-          : `Unable to connect to API server at ${this.baseUrl}. Please check your network connection and ensure the server is running.`;
+        const response = await fetch(url, {
+          ...options,
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            ...options?.headers,
+          },
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          let errorData: any;
+          try {
+            const text = await response.text();
+            console.error(`API Error Response (${response.status}) raw text:`, text);
+            try {
+              errorData = JSON.parse(text);
+            } catch (parseError) {
+              // If JSON parsing fails, use the raw text as the error message
+              errorData = { message: text || `API error: ${response.statusText} (${response.status})` };
+            }
+          } catch (e) {
+            errorData = { message: `API error: ${response.statusText} (${response.status})` };
+          }
+          
+          // Extract error message from API response - prioritize error field (contains actual DB error), then message
+          // The error field usually contains the actual database error, while message might be generic
+          const errorMessage = errorData.error || errorData.message || errorData.detailedError || `API error: ${response.statusText} (${response.status})`;
+          
+          // Include additional details if available
+          let fullErrorMessage = errorMessage;
+          if (errorData.details && process.env.NODE_ENV === 'development') {
+            fullErrorMessage += `\n\nDetails: ${errorData.details}`;
+          }
+          
+          console.error(`API Error Response (${response.status}):`, errorData);
+          console.error(`Extracted error message:`, errorMessage);
+          throw new Error(fullErrorMessage);
+        }
+
+        return await response.json();
+      } catch (error) {
+        lastError = error as Error;
         
-        throw new Error(errorMessage);
+        // Handle abort/timeout
+        if (error instanceof Error && error.name === 'AbortError') {
+          throw new Error(`Request timeout: The API server at ${this.baseUrl} did not respond within 30 seconds. Please check if the server is running and accessible.`);
+        }
+        
+        // Handle network errors (e.g., server not running, CORS, connection refused)
+        if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('Failed to fetch'))) {
+          console.error(`Network error fetching from ${url} (attempt ${attempt + 1}/${retries + 1}):`, error.message);
+          
+          // If this is the last attempt, provide detailed error message
+          if (attempt === retries) {
+            const isLocalhost = this.baseUrl.includes('localhost') || this.baseUrl.includes('127.0.0.1');
+            const isProduction = this.baseUrl.includes('3.12.102.126') || this.baseUrl.includes('pittmetrorealty.com');
+            
+            let errorMessage = `Unable to connect to API server at ${this.baseUrl}. `;
+            
+            if (isLocalhost) {
+              errorMessage += `Please ensure the server is running with "npm run server" or "npm start".`;
+            } else if (isProduction) {
+              errorMessage += `Possible causes:\n1. Server may be down - check if the server is running\n2. Firewall/Security Group may be blocking port 3001\n3. CORS configuration may need updating\n4. Network connectivity issues\n\nPlease contact the administrator or check server status.`;
+            } else {
+              errorMessage += `Please check your network connection and ensure the server is running.`;
+            }
+            
+            throw new Error(errorMessage);
+          }
+          
+          // Wait before retry (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          continue;
+        }
+        
+        // Re-throw if it's already an Error with a message (non-network errors)
+        if (error instanceof Error) {
+          throw error;
+        }
+        
+        // If we get here, it's an unexpected error
+        console.error(`Unexpected error fetching from ${url}:`, error);
+        throw new Error(`An unexpected error occurred: ${String(error)}`);
       }
-      
-      // Re-throw if it's already an Error with a message
-      if (error instanceof Error) {
-        throw error;
-      }
-      
-      console.error(`Error fetching from ${url}:`, error);
-      throw new Error(`An unexpected error occurred: ${String(error)}`);
     }
+    
+    // This should never be reached, but TypeScript needs it
+    throw lastError || new Error('Unknown error occurred');
   }
 
   /**
@@ -191,10 +252,26 @@ export class PropertiesAPI {
       const processedData = {
         ...listingData,
         photos: await Promise.all(
-          listingData.photos.map(async (photo) => {
+          listingData.photos.map(async (photo, index) => {
             if (photo.file) {
+              // Validate file size before conversion (max 5MB file = ~6.7MB base64)
+              // Database column is now TEXT, so we can store larger images
+              const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+              if (photo.file.size > MAX_FILE_SIZE) {
+                const fileSizeMB = (photo.file.size / (1024 * 1024)).toFixed(2);
+                throw new Error(`Photo ${index + 1} (${photo.name || 'unnamed'}) is too large (${fileSizeMB}MB). Maximum file size is 5MB. Please compress or resize the image before uploading.`);
+              }
+              
               // Convert file to base64
               const base64 = await this.fileToBase64(photo.file);
+              
+              // Double-check base64 length (max 5MB = ~5,242,880 characters)
+              const MAX_BASE64_SIZE = 5 * 1024 * 1024; // 5MB
+              if (base64.length > MAX_BASE64_SIZE) {
+                const base64SizeMB = (base64.length / (1024 * 1024)).toFixed(2);
+                throw new Error(`Photo ${index + 1} (${photo.name || 'unnamed'}) base64 string is too large (${base64SizeMB}MB, ${base64.length.toLocaleString()} characters). Maximum is 5MB. Please use a smaller image.`);
+              }
+              
               return {
                 name: photo.name,
                 url: base64,
@@ -211,6 +288,24 @@ export class PropertiesAPI {
         method: 'POST',
         body: JSON.stringify(processedData),
       };
+
+      console.log('📤 Submitting property data:', {
+        listingType: processedData.listingType,
+        title: processedData.title,
+        address: processedData.address,
+        city: processedData.city,
+        state: processedData.state,
+        zipCode: processedData.zipCode,
+        zip_code: (processedData as any).zip_code,
+        price: processedData.price,
+        photosCount: processedData.photos.length
+      });
+      
+      // Ensure zipCode is included in the request
+      if (!processedData.zipCode && !(processedData as any).zip_code) {
+        console.error('❌ WARNING: zipCode is missing from request data!');
+        console.error('Full processedData:', JSON.stringify(processedData, null, 2));
+      }
 
       const result = await this.fetchData<{ success: boolean; message: string; listing: PropertyListing }>('/properties', options);
       
@@ -229,6 +324,13 @@ export class PropertiesAPI {
       };
     } catch (error) {
       console.error("Failed to create property:", error);
+      console.error("Error type:", typeof error);
+      console.error("Error instanceof Error:", error instanceof Error);
+      if (error instanceof Error) {
+        console.error("Error message:", error.message);
+        console.error("Error stack:", error.stack);
+      }
+      // Don't enhance the error message - let the API's actual error message come through
       throw error;
     }
   }
